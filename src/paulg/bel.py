@@ -1,3 +1,7 @@
+# >>> from paulg.bel import *
+# >>> bel(list("quote", 1))
+# 1
+
 import builtins as py
 
 nil = None
@@ -11,6 +15,12 @@ scope = nil
 
 def id(a, b):
   return a is b
+
+def no(x):
+  return id(x, nil) or id(x, False) or (isinstance(x, (py.tuple, py.list)) and not x)
+
+def yes(x):
+  return not no(x)
 
 def join(a=nil, b=nil):
   return [a] if no(b) else [a, b]
@@ -121,6 +131,16 @@ def map2(f, xs):
     return cons(f(car(xs)),
                 map2(f, cdr(xs)))
 
+map = map2
+
+# (set vmark (join))
+vmark = join("vmark")
+
+# (def uvar ()
+#   (list vmark))
+def uvar(name=_unset):
+  return list(vmark)
+
 def apply(f, *args):
   raise NotImplementedError()
   # print('apply', f, args)
@@ -135,12 +155,6 @@ def iterate(x):
 
 def sigerr(v, s, r, m):
   return err(v, s, r, m)
-
-def no(x):
-  return id(x, nil) or id(x, False) or (isinstance(x, (py.tuple, py.list)) and not x)
-
-def yes(x):
-  return not no(x)
 
 # (def atom (x)
 #   (no (id (type x) 'pair)))
@@ -217,6 +231,41 @@ def begins(xs, pat, f=_unset):
 def caris(l, x):
   return equal(car(l), x)
 
+# (def keep (f xs)
+#   (if (no xs)      nil
+#       (f (car xs)) (cons (car xs) (keep f (cdr xs)))
+#                    (keep f (cdr xs))))
+def keep(f, xs):
+  if no(xs):
+    return nil
+  elif yes(f(car(xs))):
+    return cons(car(xs), keep(f, cdr(xs)))
+  else:
+    return keep(f, cdr(xs))
+
+# (def rem (x ys (o f =))
+#   (keep [no (f _ x)] ys))
+def rem(x, ys, f=_unset):
+  if f is _unset:
+    f = equal
+  return keep(lambda _: no(f(_, x)), ys)
+
+# (def get (k kvs (o f =))
+#   (find [f (car _) k] kvs))
+def get(k, kvs, f=_unset):
+  if f is _unset:
+    f = equal
+  return find(lambda _: f(car(_), k), kvs)
+
+# (def put (k v kvs (o f =))
+#   (cons (cons k v)
+#         (rem k kvs (fn (x y) (f (car x) y)))))
+def put(k, v, kvs, f=_unset):
+  if f is _unset:
+    f = equal
+  return cons(cons(k, v),
+              rem(k, kvs, lambda x, y: f(car(x), y)))
+
 # (def rev (xs)
 #   (if (no xs)
 #       nil
@@ -246,6 +295,16 @@ def literal(e):
   return (e in [t, nil, o, apply] or
           caris(e, "lit"))
 
+# (def variable (e)
+#   (if (atom e)
+#       (no (literal e))
+#       (id (car e) vmark)))
+def variable(e):
+  if atom(e):
+    return no(literal(e))
+  else:
+    return id(car(e), vmark)
+
 # (def isa (name)
 #   [begins _ `(lit ,name) id])
 def isa(name):
@@ -264,7 +323,6 @@ def bel(e, g=_unset):
     list(nil, g))
 
 def mev(s, r, m):
-  breakpoint()
   p, g = car(m), cadr(m)
   if no(s):
     if yes(p):
@@ -276,13 +334,48 @@ def mev(s, r, m):
   else:
     return sched(snoc(p, list(s, r)), g)
 
+# (def vref (v a s r m)
+#   (let g (cadr m)
+#     (if (inwhere s)
+#         (aif (or (lookup v a s g)
+#                  (and (car (inwhere s))
+#                       (let cell (cons v nil)
+#                         (xdr g (cons cell (cdr g)))
+#                         cell)))
+#              (mev (cdr s) (cons (list it 'd) r) m)
+#              (sigerr 'unbound s r m))
+#         (aif (lookup v a s g)
+#              (mev s (cons (cdr it) r) m)
+#              (sigerr (list 'unboundb v) s r m)))))
+def vref(v, a, s, r, m):
+  g = cadr(m)
+  if inwhere(s):
+    if yes(it := (lookup(v, a, s, g) or
+                  (car(inwhere(s)) and
+                   (lambda cell: [xdr(g, cons(cell, cdr(g))), g][1],
+                     cons(v, nil))))):
+      return mev(cdr(s), cons(list(it, "d"), r), m)
+    else:
+      return sigerr("unbound", s, r, m)
+  else:
+    if yes(it := lookup(v, a, s, g)):
+      return mev(s, cons(cdr(it), r), m)
+    else:
+      return sigerr(list("unboundb", v), s, r, m)
+
+
 # (set smark (join))
-#
+smark = join("smark")
+
 # (def inwhere (s)
 #   (let e (car (car s))
 #     (and (begins e (list smark 'loc))
 #          (cddr e))))
-#
+def inwhere(s):
+  e = car(car(s))
+  return (begins(e, list(smark, "loc")) and
+          cddr(e))
+
 # (def lookup (e a s g)
 #   (or (binding e s)
 #       (get e a id)
@@ -290,14 +383,23 @@ def mev(s, r, m):
 #       (case e
 #         scope (cons e a)
 #         globe (cons e g))))
-#
+def lookup(e, a, s, g):
+  return (binding(e, s) or
+          get(e, a, id) or
+          get(e, g, id) or
+          cons(e, a) if id(e, scope) else
+          cons(e, g) if id(e, globe) else nil)
+
 # (def binding (v s)
 #   (get v
 #        (map caddr (keep [begins _ (list smark 'bind) id]
 #                         (map car s)))
 #        id))
 def binding(v, s):
-  return nil
+  return get(v,
+             map(caddr, keep(lambda _: begins(_, list(smark, "bind"), id),
+                             map(car, s))),
+             id)
 
 
 # (def sched (((s r) . p) g)
@@ -317,20 +419,18 @@ def sched(x, g):
 #                               (evcall e a s r m)))
 
 def ev(x, r, m):
-  e, a, s = car(x), cadr(x), cddr(x)
-  breakpoint()
+  y, s = car(x), cdr(x)
+  e, a = car(y), cadr(y)
   if yes(literal(e)):
     return mev(s, cons(e, r), m)
-  # elif variable(e):
-  #   return vref(e, a, s, r, m)
+  elif variable(e):
+    return vref(e, a, s, r, m)
   elif no(proper(e)):
-    breakpoint()
     return sigerr("malformed", s, r, m)
-  # elif get(car(e), forms, id):
-  #   return cdr(it)(cdr(e), a, s, r, m)
+  elif yes(it := get(car(e), forms, id)):
+    return cdr(it)(cdr(e), a, s, r, m)
   else:
     return evcall(e, a, s, r, m)
-
 
 prims = ("id join xar xdr wrb ops".split(),
          "car cdr type sym nom rdb cls stat sys".split(),
@@ -339,6 +439,7 @@ prims = ("id join xar xdr wrb ops".split(),
 def applyprim(f, args, s, r, m):
   if type(f) == "function":
     breakpoint()
+    raise NotImplementedError()
   if any([f in l for l in prims]):
     a = car(args)
     b = cadr(args)
@@ -367,8 +468,87 @@ def applyprim(f, args, s, r, m):
   else:
     return sigerr("unknown-prim", s, r, m)
 
-def fu(args, f):
-  return list("lit", "clo", nil, args, list(apply, f, args))
+# (mac fu args
+#   `(list (list smark 'fut (fn ,@args)) nil))
+
+# (def evmark (e a s r m)
+#   (case (car e)
+#     fut  ((cadr e) s r m)
+#     bind (mev s r m)
+#     loc  (sigerr 'unfindable s r m)
+#     prot (mev (cons (list (cadr e) a)
+#                     (fu (s r m) (mev s (cdr r) m))
+#                     s)
+#               r
+#               m)
+#          (sigerr 'unknown-mark s r m)))
+def evmark(e, a, s, r, m):
+  x = car(e)
+  if x == "fut":
+    return cadr(e)(s, r, m)
+  elif x == "bind":
+    return mev(s, r, m)
+  elif x == "loc":
+    return sigerr("unfindable", s, r, m)
+  elif x == "prot":
+    return mev(cons(list(cadr(e), a),
+                    fu(list("s", "r", "m"), list("mev", "s", list("cdr", "r"), "m")),
+                    s),
+               r,
+               m)
+  else:
+    return sigerr("unknown-mark", s, r, m)
+
+# (set forms (list (cons smark evmark)))
+forms = list(cons(smark, evmark))
+
+# (mac form (name parms . body)
+#   `(set forms (put ',name ,(formfn parms body) forms)))
+def form(name, parms, body):
+  global forms
+  forms = put(name, formfn(parms, body), forms)
+
+# (def formfn (parms body)
+#   (with (v  (uvar)
+#          w  (uvar)
+#          ps (parameters (car parms)))
+#     `(fn ,v
+#        (eif ,w (apply (fn ,(car parms) (list ,@ps))
+#                       (car ,v))
+#                (apply sigerr 'bad-form (cddr ,v))
+#                (let ,ps ,w
+#                  (let ,(cdr parms) (cdr ,v) ,@body))))))
+def formfn(parms, body):
+  # v = uvar("v")
+  # w = uvar("w")
+  # ps = parameters(car(parms))
+  raise NotImplementedError()
+
+# (def parameters (p)
+#   (if (no p)           nil
+#       (variable p)     (list p)
+#       (atom p)         (err 'bad-parm)
+#       (in (car p) t o) (parameters (cadr p))
+#                        (append (parameters (car p))
+#                                (parameters (cdr p)))))
+#
+# (form quote ((e) a s r m)
+#   (mev s (cons e r) m))
+def quote (x, a, s, r, m):
+  e = car(x)
+  return mev(s, cons(e, r), m)
+
+forms = put("quote", quote, forms)
+
+
+def macro(args, body):
+  return list("list", list("quote", "lit"), list("quote", "mac"), list("fn", args, body))
+
+def fu(args, body):
+  return list("lit", "mac", list("list", list("list", "smark", list("quote", "fut"), list("fn", args, body)), nil))
+
+# def fu(args, f):
+#   return list("lit", "clo", nil, args, list(apply, f, args))
 
 # (def evcall (e a s r m)
 #   (mev (cons (list (car e) a)
@@ -378,10 +558,11 @@ def fu(args, f):
 #        r
 #        m))
 def evcall(e, a, s, r, m):
-  breakpoint()
   return mev(cons(list(car(e), a),
+                  # fu(list("s", "r", "m"),
+                  #    lambda s, r, m: evcall2(cdr(e), a, s, r, m)),
                   fu(list("s", "r", "m"),
-                     lambda s, r, m: evcall2(cdr(e), a, s, r, m)),
+                     list("evcall2", list("cdr", "e"), "a", "s", "r", "m")),
                   s),
              r,
              m)
@@ -405,10 +586,12 @@ def evcall2(es, a,  s, x, m):
   else:
     return mev(append(map(lambda _: list(_, a), es),
                       cons(fu(list("s", "r", "m"),
-                               lambda s, r, m:
+                              #  lambda s, r, m:
                               (lambda args, r2:
                                 applyf(op, rev(args), a, s, r2, m))(
                                 car(snap(es, r)), cdr(snap(es, r)))),
+                              # list("let", list("args", "r2"), list("snap", es, r),
+                              #      list("applyf", op, list("rev", args,)))
                            s)),
                r,
                m)
@@ -430,10 +613,14 @@ def applym(mac, args, a, s, r, m):
                 args,
                 a,
                 cons(fu(list("s", "r", "m"),
-                        lambda s, r, m:
-                        mev(cons(list(car(r), a), s),
-                            cdr(r),
-                            m)),
+                        # lambda s, r, m:
+                        # mev(cons(list(car(r), a), s),
+                        #     cdr(r),
+                        #     m)
+                        list(mev, list(cons, list(list, list(car, r), a, s),
+                                       list(cdr, r),
+                                       m))
+                        ),
                      s),
                 r,
                 m)
