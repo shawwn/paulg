@@ -1,5 +1,11 @@
-from paulg import __version__
+import unittest
 
+import paulg
 
-def test_version():
-    assert __version__ == '0.1.0'
+class TestCase(unittest.TestCase):
+  def test_basic(self):
+    self.assertEqual(1, 1)
+
+if __name__ == '__main__':
+  unittest.main()
+
