@@ -22,7 +22,7 @@ setup_kwargs = {
     'packages': packages,
     'package_data': package_data,
     'install_requires': install_requires,
-    'python_requires': '>=3.6,<4.0',
+    'python_requires': '>=3.8,<4.0',
     **(globals().get('base_kwargs')),
 }
 
