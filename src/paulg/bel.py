@@ -540,6 +540,27 @@ def quote (x, a, s, r, m):
 
 forms = put("quote", quote, forms)
 
+# (form if (es a s r m)
+#   (if (no es)
+#       (mev s (cons nil r) m)
+#       (mev (cons (list (car es) a)
+#                  (if (cdr es)
+#                      (cons (fu (s r m)
+#                              (if2 (cdr es) a s r m))
+#                            s)
+#                      s))
+#            r
+#            m)))
+
+# (def if2 (es a s r m)
+#   (mev (cons (list (if (car r)
+#                        (car es)
+#                        (cons 'if (cdr es)))
+#                    a)
+#              s)
+#        (cdr r)
+#        m))
+
 
 def macro(args, body):
   return list("list", list("quote", "lit"), list("quote", "mac"), list("fn", args, body))
